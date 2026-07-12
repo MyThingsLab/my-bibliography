@@ -6,12 +6,11 @@ from pathlib import Path
 from mythings.ledger import Ledger
 
 from conftest import (
-    FakeRunner,
     ScriptedEngine,
-    SpyEngine,
     branch_file,
     empty_fetch,
     fake_fetch,
+    fake_gh,
     make_repo,
 )
 from mybibliography.bibliography_tool import Bibliography
@@ -27,7 +26,7 @@ _RESOLVE_REPLY = json.dumps(
 
 
 def _bibliography(
-    repo: Path, tmp_path: Path, fake: FakeRunner, **kw
+    repo: Path, tmp_path: Path, fake: fake_gh, **kw
 ) -> tuple[Bibliography, Ledger]:
     ledger = Ledger(tmp_path / "ledger.jsonl")
     b = Bibliography(
@@ -43,7 +42,7 @@ def _bibliography(
 
 def test_add_happy_path_direct_locator_opens_pr_and_comments(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body="doi:10.1234/gnn")
+    fake = fake_gh(body="doi:10.1234/gnn")
     b, ledger = _bibliography(repo, tmp_path, fake, engine=ScriptedEngine(_RESOLVE_REPLY))
 
     result = b.add(issue=5)
@@ -71,7 +70,7 @@ def test_add_happy_path_ambiguous_query_matches_retrieved_fields_not_engine_clai
     tmp_path: Path,
 ) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body='query:"effective java"')
+    fake = fake_gh(body='query:"effective java"')
     # The scripted reply smuggles extra bibliographic fields the tool must ignore.
     reply = json.dumps(
         {
@@ -99,8 +98,8 @@ def test_add_happy_path_ambiguous_query_matches_retrieved_fields_not_engine_clai
 
 def test_add_no_candidates_skips_engine_and_pr(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body="doi:10.9999/missing")
-    spy = SpyEngine()
+    fake = fake_gh(body="doi:10.9999/missing")
+    spy = ScriptedEngine()
     b, ledger = _bibliography(repo, tmp_path, fake, engine=spy)
     b.fetch = empty_fetch
 
@@ -120,8 +119,8 @@ def test_add_already_cataloged_skips_engine_and_pr(tmp_path: Path) -> None:
     (repo / "references.json").write_text(
         json.dumps([{"id": "lovelace2021", "DOI": "10.1234/gnn"}]), encoding="utf-8"
     )
-    fake = FakeRunner(body="doi:10.1234/gnn")
-    spy = SpyEngine()
+    fake = fake_gh(body="doi:10.1234/gnn")
+    spy = ScriptedEngine()
     b, ledger = _bibliography(repo, tmp_path, fake, engine=spy)
 
     result = b.add(issue=5)
@@ -137,8 +136,8 @@ def test_add_already_cataloged_skips_engine_and_pr(tmp_path: Path) -> None:
 
 def test_add_no_locator_in_body_skips(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body="just some prose, no locator")
-    spy = SpyEngine()
+    fake = fake_gh(body="just some prose, no locator")
+    spy = ScriptedEngine()
     b, ledger = _bibliography(repo, tmp_path, fake, engine=spy)
 
     result = b.add(issue=5)
@@ -150,7 +149,7 @@ def test_add_no_locator_in_body_skips(tmp_path: Path) -> None:
 
 def test_add_no_pr_and_no_comment(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body="doi:10.1234/gnn")
+    fake = fake_gh(body="doi:10.1234/gnn")
     b, _ = _bibliography(repo, tmp_path, fake, engine=ScriptedEngine(_RESOLVE_REPLY))
 
     result = b.add(issue=5, no_pr=True, no_comment=True)
@@ -163,7 +162,7 @@ def test_add_no_pr_and_no_comment(tmp_path: Path) -> None:
 
 def test_add_reuses_existing_pr(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(
+    fake = fake_gh(
         body="doi:10.1234/gnn",
         existing_pr={"number": 42, "url": "https://github.com/owner/name/pull/42"},
     )
@@ -177,7 +176,7 @@ def test_add_reuses_existing_pr(tmp_path: Path) -> None:
 
 def test_noop_engine_single_candidate_degrade_end_to_end(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body="doi:10.1234/gnn")
+    fake = fake_gh(body="doi:10.1234/gnn")
     b, ledger = _bibliography(repo, tmp_path, fake)  # default engine: NoopEngine
 
     result = b.add(issue=5)
@@ -190,7 +189,7 @@ def test_noop_engine_single_candidate_degrade_end_to_end(tmp_path: Path) -> None
 
 def test_noop_engine_multi_candidate_degrade_end_to_end(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body='query:"effective java"')
+    fake = fake_gh(body='query:"effective java"')
     b, ledger = _bibliography(repo, tmp_path, fake)  # default engine: NoopEngine
 
     result = b.add(issue=5)
