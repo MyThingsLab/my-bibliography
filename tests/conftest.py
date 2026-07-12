@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
-from mythings.engine import EngineRequest, EngineResult
+
+# Shared fakes come from mythings.testing (plain imports; aliased fixture
+# re-export + getfixturevalue wrapper per core docs/CONVENTIONS.md).
+from mythings.testing import FakeGh, GitRepo, ScriptedEngine, make_git_repo
+from mythings.testing import clean_git_env as _shared_clean_git_env  # noqa: F401
+from mythings.testing import fake_fetch as _fake_fetch
 
 from mybibliography.retrieval import (
     CROSSREF_WORKS_ENDPOINT,
@@ -13,14 +17,14 @@ from mybibliography.retrieval import (
     OPENLIBRARY_SEARCH_ENDPOINT,
 )
 
+__all__ = ["ScriptedEngine"]
+
 
 @pytest.fixture(autouse=True)
-def _clean_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # pre-commit runs hooks with GIT_DIR/GIT_INDEX_FILE set; they leak into the
-    # git subprocesses these tests spawn (and into isolation.Workspace) and break
-    # worktree ops on the throwaway repo. Real runs are not inside a hook.
-    for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY"):
-        monkeypatch.delenv(var, raising=False)
+def _clean_git_env(request: pytest.FixtureRequest) -> None:
+    # Real git worktrees in every test; hook-launched pytest (pre-commit)
+    # must not leak GIT_* into them.
+    request.getfixturevalue("_shared_clean_git_env")
 
 
 CROSSREF_DOI_JSON = {
@@ -85,107 +89,52 @@ OPENLIBRARY_SEARCH_JSON = {
     ]
 }
 
+# Insertion order matters: the single-work path (endpoint + "/") must win the
+# substring match over the bare search endpoint.
+fake_fetch = _fake_fetch(
+    {
+        f"{CROSSREF_WORKS_ENDPOINT}/": CROSSREF_DOI_JSON,
+        CROSSREF_WORKS_ENDPOINT: CROSSREF_SEARCH_JSON,
+        "export.arxiv.org": ARXIV_ATOM,
+        OPENLIBRARY_BOOKS_ENDPOINT: OPENLIBRARY_BOOKS_JSON,
+        OPENLIBRARY_SEARCH_ENDPOINT: OPENLIBRARY_SEARCH_JSON,
+    }
+)
 
-def fake_fetch(url: str, *, data: bytes | None = None, headers: dict | None = None) -> bytes:
-    if url.startswith(f"{CROSSREF_WORKS_ENDPOINT}/"):
-        return json.dumps(CROSSREF_DOI_JSON).encode()
-    if url.startswith(CROSSREF_WORKS_ENDPOINT):
-        return json.dumps(CROSSREF_SEARCH_JSON).encode()
-    if "export.arxiv.org" in url:
-        return ARXIV_ATOM.encode()
-    if url.startswith(OPENLIBRARY_BOOKS_ENDPOINT):
-        return json.dumps(OPENLIBRARY_BOOKS_JSON).encode()
-    if url.startswith(OPENLIBRARY_SEARCH_ENDPOINT):
-        return json.dumps(OPENLIBRARY_SEARCH_JSON).encode()
-    raise AssertionError(f"unexpected fetch url: {url}")
-
-
-def empty_fetch(url: str, *, data: bytes | None = None, headers: dict | None = None) -> bytes:
-    if "export.arxiv.org" in url:
-        return b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
-    if url.startswith(f"{CROSSREF_WORKS_ENDPOINT}/"):
+empty_fetch = _fake_fetch(
+    {
+        "export.arxiv.org": b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>',
         # A single-work lookup (doi:<id>) for an unknown DOI: no "message".
-        return json.dumps({"message": None}).encode()
-    if url.startswith(CROSSREF_WORKS_ENDPOINT):
-        return json.dumps({"message": {"items": []}}).encode()
-    if url.startswith(OPENLIBRARY_SEARCH_ENDPOINT):
-        return json.dumps({"docs": []}).encode()
-    if url.startswith(OPENLIBRARY_BOOKS_ENDPOINT):
-        return json.dumps({}).encode()
-    raise AssertionError(f"unexpected fetch url: {url}")
+        f"{CROSSREF_WORKS_ENDPOINT}/": {"message": None},
+        CROSSREF_WORKS_ENDPOINT: {"message": {"items": []}},
+        OPENLIBRARY_SEARCH_ENDPOINT: {"docs": []},
+        OPENLIBRARY_BOOKS_ENDPOINT: {},
+    }
+)
 
 
-class ScriptedEngine:
-    def __init__(self, reply: str) -> None:
-        self.reply = reply
-        self.calls: list[EngineRequest] = []
+def fake_gh(
+    *,
+    title: str = "Reference request",
+    body: str = "doi:10.1234/gnn",
+    existing_pr: dict | None = None,
+) -> FakeGh:
+    def issue_view(argv: list[str]) -> str:
+        return json.dumps({"number": int(argv[2]), "title": title, "body": body})
 
-    def run(self, request: EngineRequest) -> EngineResult:
-        self.calls.append(request)
-        return EngineResult(text=self.reply)
-
-
-class SpyEngine:
-    def __init__(self) -> None:
-        self.calls: list[EngineRequest] = []
-
-    def run(self, request: EngineRequest) -> EngineResult:
-        self.calls.append(request)
-        return EngineResult(text="")
-
-
-class FakeRunner:
-    # Mocks only the `gh` subprocess boundary.
-    def __init__(
-        self,
-        *,
-        title: str = "Reference request",
-        body: str = "doi:10.1234/gnn",
-        existing_pr: dict | None = None,
-    ) -> None:
-        self.calls: list[list[str]] = []
-        self.title = title
-        self.body = body
-        self.existing_pr = existing_pr
-
-    def __call__(self, argv: list[str]) -> str:
-        self.calls.append(argv)
-        if argv[:2] == ["issue", "view"]:
-            return json.dumps({"number": int(argv[2]), "title": self.title, "body": self.body})
-        if argv[:2] == ["pr", "list"]:
-            return json.dumps([self.existing_pr] if self.existing_pr else [])
-        if argv[:2] == ["pr", "create"]:
-            return "https://github.com/owner/name/pull/7\n"
-        if argv[:2] == ["issue", "comment"]:
-            return "https://github.com/owner/name/issues/5#issuecomment-1\n"
-        raise AssertionError(f"unexpected gh call: {argv}")
+    return FakeGh(
+        {
+            ("issue", "view"): issue_view,
+            ("pr", "list"): json.dumps([existing_pr] if existing_pr else []),
+            ("pr", "create"): "https://github.com/owner/name/pull/7\n",
+            ("issue", "comment"): "https://github.com/owner/name/issues/5#issuecomment-1\n",
+        }
+    )
 
 
 def make_repo(tmp_path: Path) -> Path:
-    origin = tmp_path / "origin.git"
-    subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
-    repo = tmp_path / "work"
-    repo.mkdir()
-    (repo / "README.md").write_text("# bibliography\n", encoding="utf-8")
-
-    def _git(*argv: str) -> None:
-        subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True, text=True)
-
-    _git("init", "-b", "main")
-    _git("config", "user.email", "t@example.com")
-    _git("config", "user.name", "Bibliographer")
-    _git("add", "-A")
-    _git("commit", "-m", "init")
-    _git("remote", "add", "origin", str(origin))
-    _git("push", "-u", "origin", "main")
-    return repo
+    return make_git_repo(tmp_path, files={"README.md": "# bibliography\n"}).path
 
 
 def branch_file(repo: Path, branch: str, path: str) -> str:
-    origin = repo.parent / "origin.git"
-    proc = subprocess.run(
-        ["git", "-C", str(origin), "show", f"{branch}:{path}"],
-        capture_output=True,
-        text=True,
-    )
-    return proc.stdout
+    return GitRepo(path=repo, origin=repo.parent / "origin.git").read_committed(branch, path)
