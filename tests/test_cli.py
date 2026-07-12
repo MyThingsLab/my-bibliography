@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import FakeRunner, fake_fetch, make_repo
+from conftest import fake_fetch, fake_gh, make_repo
 from mybibliography import cli
 
 
@@ -12,7 +12,7 @@ def test_cli_add_noop_degrades_and_prints(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body="doi:10.1234/gnn")
+    fake = fake_gh(body="doi:10.1234/gnn")
     real_make = cli.Bibliography
 
     def _patched(*args, **kwargs):
@@ -46,7 +46,7 @@ def test_cli_locator_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     repo = make_repo(tmp_path)
-    fake = FakeRunner(body="no locator in body")
+    fake = fake_gh(body="no locator in body")
     real_make = cli.Bibliography
 
     def _patched(*args, **kwargs):
