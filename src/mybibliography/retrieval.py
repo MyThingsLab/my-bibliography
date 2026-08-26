@@ -2,22 +2,15 @@ from __future__ import annotations
 
 import json
 import urllib.parse
-import urllib.request
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from xml.etree import ElementTree as ET
 
-# The one network boundary. Default shells out to urllib; tests inject a fake so
-# the HTTP call is the only thing mocked (same discipline as engine/github Runners).
-Fetcher = Callable[..., bytes]
+from mythings.http import Fetcher, http_get
 
 CROSSREF_WORKS_ENDPOINT = "https://api.crossref.org/works"
 ARXIV_ENDPOINT = "http://export.arxiv.org/api/query"
 OPENLIBRARY_BOOKS_ENDPOINT = "https://openlibrary.org/api/books"
 OPENLIBRARY_SEARCH_ENDPOINT = "https://openlibrary.org/search.json"
-
-# A polite contact address for Crossref's faster pool -- not required to function.
-_USER_AGENT = "my-bibliography/0.0.1 (mailto:my.things.lab@gmail.com)"
 
 _ATOM = {"a": "http://www.w3.org/2005/Atom"}
 
@@ -43,13 +36,6 @@ class Candidate:
 class Locator:
     kind: str  # "doi" | "arxiv" | "isbn" | "query"
     value: str
-
-
-def _http(url: str, *, data: bytes | None = None, headers: dict[str, str] | None = None) -> bytes:
-    req_headers = {"User-Agent": _USER_AGENT, **(headers or {})}
-    req = urllib.request.Request(url, data=data, headers=req_headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - fixed https/http endpoints
-        return resp.read()
 
 
 _LOCATOR_PREFIXES = (("doi:", "doi"), ("arxiv:", "arxiv"), ("isbn:", "isbn"), ("query:", "query"))
@@ -141,7 +127,7 @@ def _crossref_candidate(item: dict) -> Candidate:
     )
 
 
-def fetch_crossref_doi(doi: str, *, fetch: Fetcher = _http) -> list[Candidate]:
+def fetch_crossref_doi(doi: str, *, fetch: Fetcher = http_get) -> list[Candidate]:
     doi = doi.strip()
     if not doi:
         return []
@@ -157,7 +143,7 @@ def fetch_crossref_doi(doi: str, *, fetch: Fetcher = _http) -> list[Candidate]:
     return [_crossref_candidate(item)]
 
 
-def search_crossref(query: str, *, fetch: Fetcher = _http, limit: int = 10) -> list[Candidate]:
+def search_crossref(query: str, *, fetch: Fetcher = http_get, limit: int = 10) -> list[Candidate]:
     if not query:
         return []
     params = urllib.parse.urlencode({"query.bibliographic": query, "rows": limit})
@@ -176,7 +162,7 @@ def _year_of_arxiv(published: str | None) -> int | None:
     return int(published[:4])
 
 
-def fetch_arxiv_id(arxiv_id: str, *, fetch: Fetcher = _http) -> list[Candidate]:
+def fetch_arxiv_id(arxiv_id: str, *, fetch: Fetcher = http_get) -> list[Candidate]:
     arxiv_id = arxiv_id.strip()
     if not arxiv_id:
         return []
@@ -188,7 +174,7 @@ def fetch_arxiv_id(arxiv_id: str, *, fetch: Fetcher = _http) -> list[Candidate]:
     return _parse_arxiv_feed(raw)
 
 
-def search_arxiv(query: str, *, fetch: Fetcher = _http, limit: int = 10) -> list[Candidate]:
+def search_arxiv(query: str, *, fetch: Fetcher = http_get, limit: int = 10) -> list[Candidate]:
     if not query:
         return []
     params = urllib.parse.urlencode(
@@ -263,7 +249,7 @@ def _openlibrary_candidate(data: dict, *, isbn: str = "") -> Candidate:
     )
 
 
-def fetch_openlibrary_isbn(isbn: str, *, fetch: Fetcher = _http) -> list[Candidate]:
+def fetch_openlibrary_isbn(isbn: str, *, fetch: Fetcher = http_get) -> list[Candidate]:
     isbn = isbn.strip()
     if not isbn:
         return []
@@ -280,7 +266,9 @@ def fetch_openlibrary_isbn(isbn: str, *, fetch: Fetcher = _http) -> list[Candida
     return [_openlibrary_candidate(data, isbn=isbn)]
 
 
-def search_openlibrary(query: str, *, fetch: Fetcher = _http, limit: int = 10) -> list[Candidate]:
+def search_openlibrary(
+    query: str, *, fetch: Fetcher = http_get, limit: int = 10
+) -> list[Candidate]:
     if not query:
         return []
     params = urllib.parse.urlencode({"q": query, "limit": limit})
@@ -320,7 +308,7 @@ def _score(candidate: Candidate, query_tokens: set[str]) -> tuple[int, str]:
     return (overlap, candidate.candidate_id)
 
 
-def retrieve(locator: Locator, *, fetch: Fetcher = _http, top: int = 5) -> list[Candidate]:
+def retrieve(locator: Locator, *, fetch: Fetcher = http_get, top: int = 5) -> list[Candidate]:
     found: list[Candidate] = []
     if locator.kind == "doi":
         found = fetch_crossref_doi(locator.value, fetch=fetch)
