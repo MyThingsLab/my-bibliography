@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mythings.engine import Engine, NoopEngine
 from mythings.github import GitHubError, PullRequest, Runner, _gh, _pr_number
+from mythings.http import Fetcher, http_get
 from mythings.isolation import Workspace, in_github_actions
 from mythings.ledger import Ledger
 from mythings.policy import ALLOW, Action, Decision, Policy, PolicyResult
@@ -20,7 +21,7 @@ from mybibliography.bibliography import (
     render_bibtex,
 )
 from mybibliography.resolve import Resolution, UnknownCandidateError, resolve
-from mybibliography.retrieval import Fetcher, Locator, _http, parse_locator, retrieve
+from mybibliography.retrieval import Locator, parse_locator, retrieve
 
 LABEL = "my-bibliography"
 
@@ -69,7 +70,7 @@ class Bibliography:
         engine: Engine | None = None,
         policy: Policy | None = None,
         runner: Runner = _gh,
-        fetch: Fetcher = _http,
+        fetch: Fetcher = http_get,
         top: int = 5,
     ) -> None:
         self.repo_root = Path(repo_root)
