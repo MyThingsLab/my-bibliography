@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mythings.engine import Engine, NoopEngine
-from mythings.github import GitHubError, PullRequest, Runner, _gh, _pr_number
+from mythings.github import GitHub, GitHubError, PullRequest, Runner, _gh, _pr_number
 from mythings.http import Fetcher, http_get
 from mythings.isolation import Workspace, in_github_actions
 from mythings.ledger import Ledger
@@ -82,6 +82,15 @@ class Bibliography:
         self.runner = runner
         self.fetch = fetch
         self.top = top
+
+    @property
+    def runner(self) -> Runner:
+        return self._runner
+
+    @runner.setter
+    def runner(self, value: Runner) -> None:
+        self._runner = value
+        self.github = GitHub(repo=self.repo, runner=value)
 
     # ---- add ---------------------------------------------------------
 
@@ -179,11 +188,8 @@ class Bibliography:
     # ---- github / git helpers -----------------------------------------
 
     def _fetch_issue(self, number: int) -> _Issue:
-        argv = ["issue", "view", str(number), "--json", "number,title,body"]
-        if self.repo:
-            argv += ["--repo", self.repo]
-        obj = json.loads(self.runner(argv))
-        return _Issue(number=obj["number"], title=obj["title"], body=obj.get("body") or "")
+        issue = self.github.get_issue(number)
+        return _Issue(number=issue.number, title=issue.title, body=issue.body)
 
     def _open_pr_with_entry(self, issue: int, entry: Entry) -> PullRequest:
         branch = f"{LABEL}/{issue}"
@@ -227,11 +233,11 @@ class Bibliography:
     def _comment(self, issue: int, body: str) -> str | None:
         if self.repo is None:
             return None
-        argv = ["issue", "comment", str(issue), "--repo", self.repo, "--body", body]
         action = Action(kind="bash", payload={"command": f"gh issue comment {issue}"})
         if self.policy.evaluate(action).under(unattended=in_github_actions()) is not Decision.ALLOW:
             return None
-        return self.runner(argv).strip() or None
+        self.github.comment(issue, body)
+        return "commented"
 
     def _git_run(self, tree: Path, argv: list[str]) -> None:
         self._guard("git " + " ".join(argv))
