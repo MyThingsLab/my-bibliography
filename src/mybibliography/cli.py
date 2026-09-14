@@ -3,16 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from mythings.engine import ClaudeCLIEngine, Engine, NoopEngine
+from mythings.engine import build_engine_from_args
 from mythings.ledger import Ledger
 
 from mybibliography.bibliography_tool import Bibliography, Result
-
-
-def build_engine(name: str, *, model: str | None = None) -> Engine:
-    if name == "claude-cli":
-        return ClaudeCLIEngine(model=model)
-    return NoopEngine()
 
 
 def _render(result: Result) -> str:
@@ -61,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         repo=args.repo,
         ledger=Ledger(args.ledger),
         base=args.base,
-        engine=build_engine(args.engine, model=args.engine_model),
+        engine=build_engine_from_args(args),
         top=args.top,
     )
     result = bibliography.add(
